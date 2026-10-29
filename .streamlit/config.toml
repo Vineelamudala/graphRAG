@@ -1,0 +1,6 @@
+[server]
+# Don't watch files for changes. Streamlit's watcher scans every loaded module, and the
+# lazily loaded image models inside "transformers" then print long "No module named
+# 'torchvision'" tracebacks. They are harmless, but noisy. After editing the code,
+# restart the app (or press "Rerun") to see your changes.
+fileWatcherType = "none"
