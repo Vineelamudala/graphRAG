@@ -70,6 +70,61 @@ In a knowledge graph, the **nodes** are **entities** (people, organizations, tec
 | **Property** | A key–value detail | `name`, `type`, `text`, `embedding` |
 | **Cypher** | The query language; patterns look like the graph | `(a)-[:GRAPHRAG_RELATED]->(b)` |
 
+### Nodes, relationships and properties: simple examples
+
+**Nodes** are the *things* in the graph. In this app there are two kinds:
+- **Entities** (`:GraphRAGEntity`): people, technologies, organizations and concepts the LLM finds, such as *Alex Krizhevsky*, *AlexNet* or *University of Toronto*.
+- **Chunks** (`:GraphRAGChunk`): the pieces of text cut from your documents.
+
+**Relationships** connect two nodes and always point in one direction:
+
+```mermaid
+flowchart LR
+    K["Alex Krizhevsky"] -- DEVELOPED --> A["AlexNet"]
+```
+
+In this app, every entity-to-entity link is stored as one relationship type, `GRAPHRAG_RELATED`. The verb the LLM chose (`DEVELOPED`, `USES`, `WORKS_WITH`…) is kept in its `type` property:
+
+```cypher
+(:GraphRAGEntity {name: "Alex Krizhevsky"})-[:GRAPHRAG_RELATED {type: "DEVELOPED"}]->(:GraphRAGEntity {name: "AlexNet"})
+```
+
+*The verbs are illustrative: the LLM picks them from the text, so the exact names vary. In our test run it named this link `BUILDS`.*
+
+**Properties** are key–value details stored on nodes and relationships:
+
+| Stored on | Properties (example values) |
+|---|---|
+| Entity node | `name: "Alex Krizhevsky"`, `type: "Person"`, `key: "alex krizhevsky"` (lower-case name, used to merge duplicates) |
+| Chunk node | `source: "computing_ai_connected_history.pdf"`, `chunk_index: 26`, `text: "In 2012 Alex Krizhevsky…"`, `embedding: [384 numbers]`, `graph_status: "done"` |
+| `GRAPHRAG_RELATED` relationship | `type: "DEVELOPED"` |
+
+### How a document becomes a graph
+
+Take one chunk of the sample PDF: *"In 2012 Alex Krizhevsky, Ilya Sutskever and Geoffrey Hinton of the University of Toronto entered AlexNet…"*
+
+1. The chunk is saved as a `GraphRAGChunk` node, with its text and embedding.
+2. The LLM returns the entities and relationships it finds, as JSON:
+
+   ```json
+   {"entities": [{"name": "Alex Krizhevsky", "type": "Person"}, {"name": "AlexNet", "type": "Model"}],
+    "relationships": [{"source": "Alex Krizhevsky", "relation": "DEVELOPED", "target": "AlexNet"}]}
+   ```
+
+3. Each entity becomes (or reuses) a `GraphRAGEntity` node, linked to the chunk with `GRAPHRAG_MENTIONS`. Each relationship becomes a `GRAPHRAG_RELATED` link between two entities.
+
+```mermaid
+flowchart LR
+    C["GraphRAGChunk<br/>text from the PDF"]
+    C -- GRAPHRAG_MENTIONS --> K["Alex Krizhevsky<br/>(Person)"]
+    C -- GRAPHRAG_MENTIONS --> S["Ilya Sutskever<br/>(Person)"]
+    C -- GRAPHRAG_MENTIONS --> A["AlexNet<br/>(Model)"]
+    K -- DEVELOPED --> A
+    S -- DEVELOPED --> A
+```
+
+*Arrows labelled `DEVELOPED` are `GRAPHRAG_RELATED` relationships with `type: "DEVELOPED"`.* If another chunk also mentions *AlexNet*, it links to the **same** AlexNet node. That shared node is how facts from different parts of a document get connected.
+
 **Why Neo4j suits GraphRAG**
 
 - **Relationships are stored directly**, so following a chain of facts is a quick step from node to node, with no table joins.
@@ -89,7 +144,6 @@ GraphRAG has two phases: **indexing** (building the graph) and **retrieval** (an
 | Indexing | **Embeddings** | `all-MiniLM-L6-v2` → 384 numbers per chunk |
 | Indexing | **LLM extraction**, one chunk at a time | The LLM lists entities and relationships as JSON |
 | Indexing | **Entity resolution** | *Simple:* names are normalized, so "OpenAI" and "openai." become one node (synonyms aren't merged) |
-| Indexing | **Community detection** | ❌ Not implemented (kept simple) |
 | Retrieval | **Vector search** finds the right area of the graph | Neo4j's vector index returns the 5 most similar chunks |
 | Retrieval | **Graph traversal** builds a small subgraph | Up to 15 relationships around the entities those chunks mention |
 | Retrieval | **LLM generation** | The LLM answers from the chunk text **plus** the graph facts, citing file names |
@@ -113,30 +167,33 @@ GraphRAG has two phases: **indexing** (building the graph) and **retrieval** (an
 ## Architecture of this app
 
 ```mermaid
-flowchart TD
-    subgraph IDX["① Indexing: Documents tab"]
+flowchart TB
+    subgraph IDX["1 · Indexing (Documents tab)"]
         A["📄 Upload PDF / DOCX / TXT"] --> B["Extract text<br/>pypdf · python-docx"]
-        B --> C["Split into overlapping chunks<br/>130 words, 25 overlap"]
-        C --> D["Create embeddings<br/>all-MiniLM-L6-v2 → 384 numbers"]
-        D --> E[("Neo4j<br/>GraphRAGChunk nodes<br/>+ vector index")]
-        E --> F["LLM: extract entities<br/>and relationships, one chunk at a time"]
-        F --> G["Build the knowledge graph<br/>MERGE entities by normalized name"]
-        G --> H[("Neo4j<br/>GraphRAGEntity nodes<br/>GRAPHRAG_MENTIONS · GRAPHRAG_RELATED")]
+        B --> C["Split into chunks<br/>130 words, 25 overlap"]
+        C --> D["Create embeddings<br/>all-MiniLM-L6-v2"]
+        F["LLM: extract entities<br/>and relationships per chunk"] --> G["Build the knowledge graph<br/>MERGE entities by name"]
     end
 
-    subgraph QA["② Question answering: Ask tab"]
-        Q["💬 User question"] --> QE["Embed the question<br/>same model"]
+    DB[("Neo4j<br/>GraphRAGChunk + vector index<br/>GraphRAGEntity + relationships")]
+
+    D -->|store chunks| DB
+    DB -->|pending chunks| F
+    G -->|save entities and links| DB
+
+    subgraph QA["2 · Question answering (Ask tab)"]
+        Q["💬 User question"] --> QE["Embed the question"]
         QE --> VS["Vector search<br/>top 5 similar chunks"]
-        VS --> GR["Graph retrieval<br/>entities in those chunks<br/>and their relationships"]
+        VS --> GR["Graph retrieval<br/>relationships around<br/>their entities"]
         VS --> CTX["Combine context<br/>chunk text + graph facts"]
         GR --> CTX
-        CTX --> LLM["LLM<br/>answers ONLY from this context"]
-        LLM --> UI["🖥️ Streamlit shows the answer,<br/>source files, passages,<br/>graph facts and a mini graph"]
+        CTX --> LLM["LLM answers ONLY<br/>from this context"]
+        LLM --> UI["🖥️ Streamlit shows the answer,<br/>sources, passages and graph facts"]
     end
 
-    E -.->|vector index| VS
-    H -.->|graph traversal| GR
-    H -.->|Knowledge graph tab| VIZ["🕸️ Interactive graph view<br/>pyvis"]
+    DB -.->|vector index| VS
+    DB -.->|graph traversal| GR
+    DB -.->|Knowledge graph tab| VIZ["🕸️ Interactive graph view<br/>pyvis"]
 ```
 
 *The diagram uses [Mermaid](https://mermaid.js.org/). It renders on GitHub; in VS Code, install a Mermaid preview extension.*
