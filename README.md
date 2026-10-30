@@ -160,7 +160,7 @@ GraphRAG has two phases: **indexing** (building the graph) and **retrieval** (an
 | You need to **connect facts** and **trace relationships** (multi-hop questions) | You need a **direct fact look-up** |
 | **Explainability** matters: answers come with the graph facts used | **Speed and cost** matter most: no LLM call per chunk |
 
-**A good test file:** `documents/computing_ai_connected_history.pdf` was written for this. People and institutions recur across chapters, so questions need two or three hops, for example *"Who co-authored AlexNet and later co-founded OpenAI?"*
+**A good test file:** `documents/computing_ai_connected_history.pdf` was written for this. People and institutions recur across chapters, so questions need two or three hops, for example *"Which laboratory connects the transistor, information theory and convolutional neural networks?"* or *"What did Geoffrey Hinton work on?"*
 
 ---
 
@@ -263,7 +263,8 @@ MATCH (n) WHERE n:GraphRAGChunk OR n:GraphRAGEntity DETACH DELETE n
 - **An LLM API key**, for example a free Groq key from [console.groq.com/keys](https://console.groq.com/keys). It's optional, but without it there's no graph extraction and no written answers.
 
 ```bash
-cd graph-rag
+git clone https://github.com/Vineelamudala/graphRAG.git
+cd graphRAG
 python -m venv .venv
 # Windows:      .venv\Scripts\activate
 # macOS/Linux:  source .venv/bin/activate
@@ -325,14 +326,14 @@ The LiteLLM choice also works with any other OpenAI-compatible endpoint, for exa
 
 | Problem | What to do |
 |---|---|
-| *"Neo4j rejected the username or password."* | Use the values from the Aura credentials file (the username is usually `neo4j`) |
+| *"Neo4j rejected the username or password."* | Use the username and password from the Aura credentials file (on Aura the username is often the instance ID, not `neo4j`) |
 | *"Could not reach Neo4j…"* | Check the URI (`neo4j+s://…`) and resume a paused instance in the Aura console |
 | *"The LLM API key was rejected."* | Check the key for the selected provider (Groq key or LiteLLM key) |
 | *"The LLM doesn't know this model name."* | Check the model name: [Groq's models](https://console.groq.com/docs/models), or a `model_name` from your LiteLLM config |
 | *"The LLM's rate limit or daily quota was reached."* | Wait, then click **Extract graph for remaining chunks**. Short limits are retried automatically |
 | *"LiteLLM needs the openai package"* | Run `pip install openai` |
 | *"No text found in …"* | The PDF is scanned (images). Use a text-based PDF or run OCR first |
-| Long `No module named 'torchvision'` tracebacks in the terminal | Harmless. `.streamlit/config.toml` turns off the file watcher that caused them; start the app from the `graph-rag` folder |
+| Long `No module named 'torchvision'` tracebacks in the terminal | Harmless. `.streamlit/config.toml` turns off the file watcher that caused them; start the app from the project folder |
 | PowerShell blocks `activate` | Skip activation and run `.venv\Scripts\python.exe -m streamlit run app.py` |
 
 ---
@@ -350,7 +351,7 @@ The LiteLLM choice also works with any other OpenAI-compatible endpoint, for exa
 ## Project files
 
 ```
-graph-rag/
+graphRAG/
 ├── app.py                  # Streamlit user interface
 ├── rag_core.py             # GraphRAG logic (no Streamlit code)
 ├── rag.ipynb               # Step-by-step notebook
